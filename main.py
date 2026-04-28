@@ -1,115 +1,141 @@
-import json
 import os
-from difflib import get_close_matches
+import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
-from fastapi import FastAPI, Query
 from dotenv import load_dotenv
+from enum import Enum
 
-# 1. Load variables from .env file
+# Load environment variables
 load_dotenv()
-
-# 2. Setup Groq using the secure API key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Initialize FastAPI and Groq
+app = FastAPI()
 client = Groq(api_key=GROQ_API_KEY)
 
-# 3. Initialize FastAPI App
-app = FastAPI(title="Food AI Search API", version="1.0")
+# CORS setup (3ashan el Frontend y-3raf yekalemna)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 4. Load the JSON database
-food_list = []
-food_db = {}
+DB_FILE = "food_db.json"
 
-def load_database():
-    global food_list, food_db
-    try:
-        with open('food_db.json', 'r', encoding='utf-8') as f:
-            food_list = json.load(f)
-        # Convert to dictionary for fast searching (lowercase keys)
-        food_db = {item["name"].lower(): item["description"] for item in food_list}
-        print(f"Database loaded successfully with {len(food_list)} items.")
-    except FileNotFoundError:
-        print("Warning: food_db.json file not found! A new one will be created.")
-        food_list = []
-        food_db = {}
+# --- EL EKHTYARAT (Drop-down Menus) ---
+class ToneEnum(str, Enum):
+    professional = "professional"
+    funny = "funny"
+    mouth_watering = "mouth-watering"
+    casual = "casual"
 
-# Run the load function when the app starts
-load_database()
+class TypeEnum(str, Enum):
+    food = "food"
+    drink = "drink"
+    dessert = "dessert"
 
-def save_to_json(new_food_list):
-    """Saves the updated list back to the JSON file."""
-    try:
-        with open('food_db.json', 'w', encoding='utf-8') as f:
-            json.dump(new_food_list, f, ensure_ascii=False, indent=4) 
-    except Exception as e:
-        print(f"Error saving to JSON: {e}")
+# --- LOAD & SAVE DATABASE ---
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as file:
+            try:
+                return json.load(file)
+            except json.JSONDecodeError:
+                return {} # Law el malaf fady aw moshkela f-formato, yebda2 3la ndafa
+    return {}
 
-# 5. Define the API Endpoint
+def save_db(db):
+    with open(DB_FILE, "w", encoding="utf-8") as file:
+        json.dump(db, file, indent=4)
+
+food_db = load_db()
+
+# --- HEALTH CHECK ---
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "database_items": len(food_db)}
+
+# --- EL ENDPOINT EL ASASY ---
 @app.get("/api/food")
-def get_food_info(name: str = Query(..., description="Food name to search")):
-    query = name.lower().strip()
+def get_food(
+    name: str, 
+    item_type: TypeEnum = TypeEnum.food, 
+    tone: ToneEnum = ToneEnum.professional
+):
+    name_lower = name.lower()
+    
+    # 1. LOCAL SEARCH (Bndawar 3al Akla + El Tone el matloub)
+    if name_lower in food_db:
+        if "descriptions" in food_db[name_lower] and tone.value in food_db[name_lower]["descriptions"]:
+            if food_db[name_lower]["descriptions"][tone.value]:
+                return {
+                    "status": "success",
+                    "source": "local_database",
+                    "name": name,
+                    "type": item_type.value,
+                    "tone": tone.value,
+                    "description": food_db[name_lower]["descriptions"][tone.value]
+                }
 
-    # Step 1: Local Search (80% accuracy threshold to prevent mismatches)
-    matches = get_close_matches(query, food_db.keys(), n=1, cutoff=0.8)
-
-    if matches:
-        matched_name = matches[0]
-        return {
-            "status": "success",
-            "source": "local_json",
-            "name": matched_name.title(),
-            "description": food_db[matched_name]
-        }
-
-    # Step 2: Fallback to Groq AI
+    # 2. ASK GROQ AI (Han-tlub mno El Tone el mtkhar BAS)
     try:
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a professional menu writer. Describe the following food item in a short, appetizing way (maximum 15 to 20 words). Focus only on the taste and ingredients. Do not add conversational text."
+                    "content": f"""You are an elite culinary copywriter. The user will provide a {item_type.value}. 
+Write a single, elegant description (around 25 to 40 words) matching exactly a '{tone.value}' tone. 
+- professional: High-end restaurant menu style.
+- funny: Clever, witty, and relatable.
+- mouth-watering: Deeply sensory, focusing on cravings.
+- casual: Warm, inviting, and friendly.
+Do not include any other text, just the description."""
                 },
                 {
                     "role": "user",
-                    "content": f"Food item: {name}"
+                    "content": f"Item: {name}"
                 }
             ],
-            temperature=0.6,
-            max_tokens=40
+            temperature=0.75,
+            max_tokens=100  # Raga3naha 100 3ashan howa by-kteb wasf wahed bas dlw2ty
         )
+        
+        # B-nestlem el wasf el wahed bas
         ai_description = response.choices[0].message.content.strip()
-
-        # Step 3: Auto-save the new dish
-        formatted_name = name.title()
         
-        # Update current memory
-        food_db[query] = ai_description
-        food_list.append({
-            "name": formatted_name,
-            "description": ai_description
-        })
+        # 3. SAVE TO DATABASE (N-save el Tone da bas)
+        if name_lower not in food_db:
+            food_db[name_lower] = {
+                "name": name,
+                "type": item_type.value,
+                "descriptions": {}
+            }
+            
+        # Han-zawed el wasf el gdid 3ala el descriptions el adima (law feh)
+        food_db[name_lower]["descriptions"][tone.value] = ai_description
         
-        # Write to file
-        save_to_json(food_list)
+        save_db(food_db)
 
         return {
             "status": "success",
             "source": "groq_ai",
-            "name": formatted_name,
+            "name": name,
+            "type": item_type.value,
+            "tone": tone.value,
             "description": ai_description
         }
 
     except Exception as e:
-        # Step 4: Emergency Fallback (if internet drops or API fails)
         return {
             "status": "error",
             "source": "fallback",
-            "name": name.title(),
-            "description": "A delicious and freshly prepared dish, crafted with high-quality ingredients.",
+            "name": name,
+            "description": "A deliciously prepared item, ready to be enjoyed.",
             "details": str(e)
         }
-
-# Optional: Allows you to run the file directly for local testing
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)    
