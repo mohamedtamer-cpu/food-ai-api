@@ -16,4 +16,4 @@ COPY food_db.json .
 EXPOSE 8000
 
 # Run el API
-CMD ["uvicorn", "main.py:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

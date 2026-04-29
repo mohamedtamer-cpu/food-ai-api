@@ -87,7 +87,7 @@ def get_food(
                 {
                     "role": "system",
                     "content": f"""You are an elite culinary copywriter. The user will provide a {item_type.value}. 
-Write a single, elegant description (around 25 to 40 words) matching exactly a '{tone.value}' tone. 
+Write a single, elegant description (around 20 to 30 words) matching exactly a '{tone.value}' tone. 
 - professional: High-end restaurant menu style.
 - funny: Clever, witty, and relatable.
 - mouth-watering: Deeply sensory, focusing on cravings.
